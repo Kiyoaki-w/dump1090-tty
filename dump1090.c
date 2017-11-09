@@ -1,4 +1,4 @@
-/* Mode1090, a Mode S messages decoder for RTLSDR devices.
+/* Mode1090, a Mode S messages decoder for serial port devices.
  *
  * Copyright (C) 2012 by Salvatore Sanfilippo <antirez@gmail.com>
  *
@@ -82,6 +82,7 @@
 #define MODES_INTERACTIVE_TTL 60                /* TTL before being removed */
 
 #define MODES_NET_MAX_FD 1024
+#define MODES_NET_OUTPUT_TRAJECTORY_PORT 30004
 #define MODES_NET_OUTPUT_SBS_PORT 30003
 #define MODES_NET_OUTPUT_RAW_PORT 30002
 #define MODES_NET_INPUT_RAW_PORT 30001
@@ -147,6 +148,7 @@ struct {
     char aneterr[ANET_ERR_LEN];
     struct client *clients[MODES_NET_MAX_FD]; /* Our clients. */
     int maxfd;                      /* Greatest fd currently active. */
+    int trs;                        /* Trajectory output listening socket. */
     int sbsos;                      /* SBS output listening socket. */
     int ros;                        /* Raw output listening socket. */
     int ris;                        /* Raw input listening socket. */
@@ -177,6 +179,7 @@ struct {
     
     long long stat_http_requests;
     long long stat_sbs_connections;
+    long long stat_trajectory_connections;
 } Modes;
 
 /* The struct we use to store information about a decoded message. */
@@ -228,6 +231,7 @@ void interactiveShowData(void);
 struct aircraft* interactiveReceiveData(struct modesMessage *mm);
 void modesSendRawOutput(struct modesMessage *mm);
 void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a);
+void modesSendTrajectoryOutput(struct aircraft *a);
 void useModesMessage(struct modesMessage *mm);
 int fixSingleBitErrors(unsigned char *msg, int bits);
 int fixTwoBitsErrors(unsigned char *msg, int bits);
@@ -288,6 +292,8 @@ void modesInit(void) {
     /* Statistics */
     Modes.stat_http_requests = 0;
     Modes.stat_sbs_connections = 0;
+    Modes.stat_trajectory_connections = 0;
+    
     Modes.exit = 0;
 }
 
@@ -1214,9 +1220,10 @@ void useModesMessage(struct modesMessage *mm) {
     if (!Modes.stats && (Modes.check_crc == 0 || mm->crcok)) {
         /* Track aircrafts in interactive mode or if the HTTP
          * interface is enabled. */
-        if (Modes.interactive || Modes.stat_http_requests > 0 || Modes.stat_sbs_connections > 0) {
+        if (Modes.interactive || Modes.stat_http_requests > 0 || Modes.stat_sbs_connections > 0 || Modes.stat_trajectory_connections > 0) {
             struct aircraft *a = interactiveReceiveData(mm);
             if (a && Modes.stat_sbs_connections > 0) modesSendSBSOutput(mm, a);  /* Feed SBS output clients. */
+            if (a && Modes.stat_trajectory_connections > 0) modesSendTrajectoryOutput(a);
         }
         /* In non-interactive way, display messages on standard output. */
         if (!Modes.interactive) {
@@ -1561,7 +1568,9 @@ void snipMode(int level) {
 #define MODES_NET_SERVICE_RAWI 1
 #define MODES_NET_SERVICE_HTTP 2
 #define MODES_NET_SERVICE_SBS 3
-#define MODES_NET_SERVICES_NUM 4
+#define MODES_NET_SERVICE_TRAJECTORY 4
+
+#define MODES_NET_SERVICES_NUM 5
 struct {
     char *descr;
     int *socket;
@@ -1570,7 +1579,8 @@ struct {
     {"Raw TCP output", &Modes.ros, MODES_NET_OUTPUT_RAW_PORT},
     {"Raw TCP input", &Modes.ris, MODES_NET_INPUT_RAW_PORT},
     {"HTTP server", &Modes.https, MODES_NET_HTTP_PORT},
-    {"Basestation TCP output", &Modes.sbsos, MODES_NET_OUTPUT_SBS_PORT}
+    {"Basestation TCP output", &Modes.sbsos, MODES_NET_OUTPUT_SBS_PORT},
+    {"Trajectory TCP output", &Modes.trs, MODES_NET_OUTPUT_TRAJECTORY_PORT}
 };
 
 /* Networking "stack" initialization. */
@@ -1630,6 +1640,10 @@ void modesAcceptClients(void) {
         if (Modes.maxfd < fd) Modes.maxfd = fd;
         if (*modesNetServices[j].socket == Modes.sbsos)
             Modes.stat_sbs_connections++;
+        
+        if (*modesNetServices[j].socket == Modes.trs) {
+            Modes.stat_trajectory_connections++;
+        }
         
         j--; /* Try again with the same listening port. */
         
@@ -1747,6 +1761,15 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
     
     *p++ = '\n';
     modesSendAllClients(Modes.sbsos, msg, p-msg);
+}
+
+/* Send trajectory message in string.
+ * trajectory message format like: !CSN6909 ,115.9741,39.8630,10000,286,145,1510242849* */
+void modesSendTrajectoryOutput(struct aircraft *a) {
+    char msg[256];
+    int n = sprintf(msg, "!%s,%.4lf,%.4lf,%d,%d,%d,%ld*",
+                    a->flight, a->lon, a->lat, a->altitude, a->speed, a->track, a->seen);
+    modesSendAllClients(Modes.trs, msg, n);
 }
 
 /* Turn an hex digit into its 4 bit decimal value.
@@ -2103,7 +2126,7 @@ void showHelp(void) {
            "--interactive-ttl <sec>  Remove from list if idle for <sec> (default: 60).\n"
            "--raw                    Show only messages hex values.\n"
            "--net                    Enable networking.\n"
-           "--net-only               Enable just networking, no RTL device or file used.\n"
+           "--net-only               Enable just networking, no tty device or file used.\n"
            "--net-ro-port <port>     TCP listening port for raw output (default: 30002).\n"
            "--net-ri-port <port>     TCP listening port for raw input (default: 30001).\n"
            "--net-http-port <port>   HTTP server port (default: 8080).\n"
@@ -2183,6 +2206,8 @@ int main(int argc, char **argv) {
             modesNetServices[MODES_NET_SERVICE_HTTP].port = atoi(argv[++j]);
         } else if (!strcmp(argv[j], "--net-sbs-port") && more) {
             modesNetServices[MODES_NET_SERVICE_SBS].port = atoi(argv[++j]);
+        } else if (!strcmp(argv[j], "--net-trj-port") && more) {
+            modesNetServices[MODES_NET_SERVICE_TRAJECTORY].port = atoi(argv[++j]);
         } else if (!strcmp(argv[j], "--onlyaddr")) {
             Modes.onlyaddr = 1;
         } else if (!strcmp(argv[j], "--metric")) {
@@ -2236,7 +2261,7 @@ int main(int argc, char **argv) {
     /* Initialization */
     modesInit();
     if (Modes.net_only) {
-        fprintf(stderr, "Net-only mode, no RTL device or file open.\n");
+        fprintf(stderr, "Net-only mode, no tty device or file open.\n");
     } if (Modes.serial_port_addr != NULL) {
         modesInitSerialPort();
     } else if (Modes.filename != NULL) {
@@ -2253,7 +2278,7 @@ int main(int argc, char **argv) {
     if (Modes.net) modesInitNet();
     
     /* If the user specifies --net-only, just run in order to serve network
-     * clients without reading data from the RTL device. */
+     * clients without reading data from the tty device. */
     while (Modes.net_only) {
         backgroundTasks();
         modesWaitReadableClients(100);
