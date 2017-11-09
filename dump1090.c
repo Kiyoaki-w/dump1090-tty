@@ -46,14 +46,10 @@
 #include <termios.h>
 #include "anet.h"
 
-#define MODES_DEFAULT_RATE         2000000
-#define MODES_DEFAULT_FREQ         1090000000
 #define MODES_DEFAULT_WIDTH        1000
 #define MODES_DEFAULT_HEIGHT       700
 #define MODES_ASYNC_BUF_NUMBER     12
 #define MODES_DATA_LEN             (16*16384)   /* 256k */
-#define MODES_AUTO_GAIN            -100         /* Use automatic gain. */
-#define MODES_MAX_GAIN             999999       /* Use max available gain. */
 
 #define MODES_PREAMBLE_US 8       /* microseconds */
 #define MODES_LONG_MSG_BITS 112
@@ -130,19 +126,17 @@ struct {
     pthread_t reader_thread;
     pthread_mutex_t data_mutex;     /* Mutex to synchronize buffer access. */
     pthread_cond_t data_cond;       /* Conditional variable associated. */
-    unsigned char *data;            /* Raw IQ samples buffer */
-    uint16_t *magnitude;            /* Magnitude vector */
-    uint32_t data_len;              /* Buffer length. */
     int fd;                         /* --ifile option file descriptor. */
     int data_ready;                 /* Data ready to be processed. */
     uint32_t *icao_cache;           /* Recently seen ICAO addresses cache. */
-    uint16_t *maglut;               /* I/Q -> Magnitude lookup table. */
     int exit;                       /* Exit from the main loop when true. */
     
     /* Serial port */
     char *serial_port_addr;         /* Serial port address. */
     int speed;                      /* Baudrate */
     int parity;                     /* No parity check when 0, otherwise 1. */
+    
+    /* Hex input */
     char hex_buffer[MODES_HEX_LEN];  /* remainder hex string */
     ssize_t hex_buffer_len;
     ssize_t hex_buffer_idx;
@@ -159,7 +153,7 @@ struct {
     int https;                      /* HTTP listening socket. */
     
     /* Configuration */
-    char *filename;                 /* Input form file, --ifile option. */
+    char *filename;                 /* Input form file, --file option. */
     int fix_errors;                 /* Single bit error correction if true. */
     int check_crc;                  /* Only display messages with good CRC. */
     int raw;                        /* Raw output format. */
@@ -169,7 +163,7 @@ struct {
     int interactive;                /* Interactive mode */
     int interactive_rows;           /* Interactive mode: max number of rows. */
     int interactive_ttl;            /* Interactive mode: TTL before deletion. */
-    int stats;                      /* Print stats at exit in --ifile mode. */
+    int stats;                      /* Print stats at exit in --file mode. */
     int onlyaddr;                   /* Print only ICAO addresses. */
     int metric;                     /* Use metric units. */
     int aggressive;                 /* Aggressive detection algorithm. */
@@ -179,16 +173,10 @@ struct {
     long long interactive_last_update;  /* Last screen update in milliseconds */
     
     /* Statistics */
-    long long stat_valid_preamble;
-    long long stat_demodulated;
-    long long stat_goodcrc;
-    long long stat_badcrc;
-    long long stat_fixed;
-    long long stat_single_bit_fix;
-    long long stat_two_bits_fix;
+    long long stat_decoded_msg;
+    
     long long stat_http_requests;
     long long stat_sbs_connections;
-    long long stat_out_of_phase;
 } Modes;
 
 /* The struct we use to store information about a decoded message. */
@@ -281,7 +269,6 @@ void modesInitConfig(void) {
 }
 
 void modesInit(void) {
-    int i, q;
     
     pthread_mutex_init(&Modes.data_mutex, NULL);
     pthread_cond_init(&Modes.data_cond, NULL);
@@ -289,13 +276,7 @@ void modesInit(void) {
     Modes.hex_data_len = 0;
     Modes.hex_buffer_len = 0;
     Modes.hex_buffer_idx = 0;
-    
-    /* We add a full message minus a final bit to the length, so that we
-     * can carry the remaining part of the buffer that we can't process
-     * in the message detection loop, back at the start of the next data
-     * to process. This way we are able to also detect messages crossing
-     * two reads. */
-    Modes.data_len = MODES_DATA_LEN + (MODES_FULL_LEN-1)*4;
+
     Modes.data_ready = 0;
     /* Allocate the ICAO address cache. We use two uint32_t for every
      * entry because it's a addr / timestamp pair for every entry. */
@@ -303,38 +284,10 @@ void modesInit(void) {
     memset(Modes.icao_cache, 0, sizeof(uint32_t)*MODES_ICAO_CACHE_LEN*2);
     Modes.aircrafts = NULL;
     Modes.interactive_last_update = 0;
-    if ((Modes.data = malloc(Modes.data_len)) == NULL ||
-        (Modes.magnitude = malloc(Modes.data_len*2)) == NULL) {
-        fprintf(stderr, "Out of memory allocating data buffer.\n");
-        exit(1);
-    }
-    memset(Modes.data, 127, Modes.data_len);
-    
-    /* Populate the I/Q -> Magnitude lookup table. It is used because
-     * sqrt or round may be expensive and may vary a lot depending on
-     * the libc used.
-     *
-     * We scale to 0-255 range multiplying by 1.4 in order to ensure that
-     * every different I/Q pair will result in a different magnitude value,
-     * not losing any resolution. */
-    Modes.maglut = malloc(129*129*2);
-    for (i = 0; i <= 128; i++) {
-        for (q = 0; q <= 128; q++) {
-            Modes.maglut[i*129+q] = round(sqrt(i*i+q*q)*360);
-        }
-    }
     
     /* Statistics */
-    Modes.stat_valid_preamble = 0;
-    Modes.stat_demodulated = 0;
-    Modes.stat_goodcrc = 0;
-    Modes.stat_badcrc = 0;
-    Modes.stat_fixed = 0;
-    Modes.stat_single_bit_fix = 0;
-    Modes.stat_two_bits_fix = 0;
     Modes.stat_http_requests = 0;
     Modes.stat_sbs_connections = 0;
-    Modes.stat_out_of_phase = 0;
     Modes.exit = 0;
 }
 
@@ -402,17 +355,29 @@ void modesInitSerialPort(void) {
     setSerialPortBlocking(Modes.fd, 1);
 }
 
-void readDataFromSerialPort(void) {
+void readHexData(void) {
     pthread_mutex_lock(&Modes.data_mutex);
     while(1) {
         if (Modes.data_ready) {
             pthread_cond_wait(&Modes.data_cond, &Modes.data_mutex);
             continue;
         }
+        if (Modes.interactive && Modes.filename != NULL) {
+            /* When --file and --interactive are used together, slow down
+             * playing at the natural rate of the tty received. */
+            pthread_mutex_unlock(&Modes.data_mutex);
+            usleep(5000);
+            pthread_mutex_lock(&Modes.data_mutex);
+        }
+        
         Modes.hex_data_len = 0;
         while (1) {
             if (Modes.hex_buffer_idx >= Modes.hex_buffer_len) {
                 Modes.hex_buffer_len = read(Modes.fd, Modes.hex_buffer, MODES_HEX_LEN);
+                if (Modes.filename != NULL && Modes.hex_buffer_len == 0) {
+                    Modes.exit = 1; /* Signal the other thread to exit. */
+                    break;
+                }
                 Modes.hex_buffer_idx = 0;
             } else if (Modes.hex_buffer[Modes.hex_buffer_idx] == '\n') {
                 Modes.hex_data[Modes.hex_data_len] = '\0';
@@ -431,61 +396,11 @@ void readDataFromSerialPort(void) {
     }
 }
 
-/* This is used when --ifile is specified in order to read data from file
- * instead of using an RTLSDR device. */
-void readDataFromFile(void) {
-    pthread_mutex_lock(&Modes.data_mutex);
-    while(1) {
-        ssize_t nread, toread;
-        unsigned char *p;
-        
-        if (Modes.data_ready) {
-            pthread_cond_wait(&Modes.data_cond, &Modes.data_mutex);
-            continue;
-        }
-        
-        if (Modes.interactive) {
-            /* When --ifile and --interactive are used together, slow down
-             * playing at the natural rate of the RTLSDR received. */
-            pthread_mutex_unlock(&Modes.data_mutex);
-            usleep(5000);
-            pthread_mutex_lock(&Modes.data_mutex);
-        }
-        
-        /* Move the last part of the previous buffer, that was not processed,
-         * on the start of the new buffer. */
-        memcpy(Modes.data, Modes.data+MODES_DATA_LEN, (MODES_FULL_LEN-1)*4);
-        toread = MODES_DATA_LEN;
-        p = Modes.data+(MODES_FULL_LEN-1)*4;
-        while(toread) {
-            nread = read(Modes.fd, p, toread);
-            if (nread <= 0) {
-                Modes.exit = 1; /* Signal the other thread to exit. */
-                break;
-            }
-            p += nread;
-            toread -= nread;
-        }
-        if (toread) {
-            /* Not enough data on file to fill the buffer? Pad with
-             * no signal. */
-            memset(p, 127, toread);
-        }
-        Modes.data_ready = 1;
-        /* Signal to the other thread that new data is ready */
-        pthread_cond_signal(&Modes.data_cond);
-    }
-}
-
 /* We read data using a thread, so the main thread only handles decoding
  * without caring about data acquisition. */
 void *readerThreadEntryPoint(void *arg) {
     MODES_NOTUSED(arg);
-    if (Modes.serial_port_addr != NULL) {
-        readDataFromSerialPort();
-    } else if (Modes.filename != NULL) {
-        readDataFromFile();
-    }
+    readHexData();
     return NULL;
 }
 
@@ -1245,39 +1160,6 @@ void displayModesMessage(struct modesMessage *mm) {
     }
 }
 
-/* Turn I/Q samples pointed by Modes.data into the magnitude vector
- * pointed by Modes.magnitude. */
-void computeMagnitudeVector(void) {
-    uint16_t *m = Modes.magnitude;
-    unsigned char *p = Modes.data;
-    uint32_t j;
-    
-    /* Compute the magnitudo vector. It's just SQRT(I^2 + Q^2), but
-     * we rescale to the 0-255 range to exploit the full resolution. */
-    for (j = 0; j < Modes.data_len; j += 2) {
-        int i = p[j]-127;
-        int q = p[j+1]-127;
-        
-        if (i < 0) i = -i;
-        if (q < 0) q = -q;
-        m[j/2] = Modes.maglut[i*129+q];
-    }
-}
-
-/* Return -1 if the message is out of fase left-side
- * Return  1 if the message is out of fase right-size
- * Return  0 if the message is not particularly out of phase.
- *
- * Note: this function will access m[-1], so the caller should make sure to
- * call it only if we are not at the start of the current buffer. */
-int detectOutOfPhase(uint16_t *m) {
-    if (m[3] > m[2]/3) return 1;
-    if (m[10] > m[9]/3) return 1;
-    if (m[6] > m[7]/3) return -1;
-    if (m[-1] > m[1]/3) return -1;
-    return 0;
-}
-
 /* This function does not really correct the phase of the message, it just
  * applies a transformation to the first sample representing a given bit:
  *
@@ -1321,242 +1203,8 @@ void applyPhaseCorrection(uint16_t *m) {
     }
 }
 
-/* Detect a Mode S messages inside the magnitude buffer pointed by 'm' and of
- * size 'mlen' bytes. Every detected Mode S message is convert it into a
- * stream of bits and passed to the function to display it. */
-void detectModeS(uint16_t *m, uint32_t mlen) {
-    unsigned char bits[MODES_LONG_MSG_BITS];
-    unsigned char msg[MODES_LONG_MSG_BITS/2];
-    uint16_t aux[MODES_LONG_MSG_BITS*2];
-    uint32_t j;
-    int use_correction = 0;
-    
-    /* The Mode S preamble is made of impulses of 0.5 microseconds at
-     * the following time offsets:
-     *
-     * 0   - 0.5 usec: first impulse.
-     * 1.0 - 1.5 usec: second impulse.
-     * 3.5 - 4   usec: third impulse.
-     * 4.5 - 5   usec: last impulse.
-     *
-     * Since we are sampling at 2 Mhz every sample in our magnitude vector
-     * is 0.5 usec, so the preamble will look like this, assuming there is
-     * an impulse at offset 0 in the array:
-     *
-     * 0   -----------------
-     * 1   -
-     * 2   ------------------
-     * 3   --
-     * 4   -
-     * 5   --
-     * 6   -
-     * 7   ------------------
-     * 8   --
-     * 9   -------------------
-     */
-    for (j = 0; j < mlen - MODES_FULL_LEN*2; j++) {
-        int low, high, delta, i, errors;
-        int good_message = 0;
-        
-        if (use_correction) goto good_preamble; /* We already checked it. */
-        
-        /* First check of relations between the first 10 samples
-         * representing a valid preamble. We don't even investigate further
-         * if this simple test is not passed. */
-        if (!(m[j] > m[j+1] &&
-              m[j+1] < m[j+2] &&
-              m[j+2] > m[j+3] &&
-              m[j+3] < m[j] &&
-              m[j+4] < m[j] &&
-              m[j+5] < m[j] &&
-              m[j+6] < m[j] &&
-              m[j+7] > m[j+8] &&
-              m[j+8] < m[j+9] &&
-              m[j+9] > m[j+6]))
-        {
-            if (Modes.debug & MODES_DEBUG_NOPREAMBLE &&
-                m[j] > MODES_DEBUG_NOPREAMBLE_LEVEL)
-                dumpRawMessage("Unexpected ratio among first 10 samples",
-                               msg, m, j);
-            continue;
-        }
-        
-        /* The samples between the two spikes must be < than the average
-         * of the high spikes level. We don't test bits too near to
-         * the high levels as signals can be out of phase so part of the
-         * energy can be in the near samples. */
-        high = (m[j]+m[j+2]+m[j+7]+m[j+9])/6;
-        if (m[j+4] >= high ||
-            m[j+5] >= high)
-        {
-            if (Modes.debug & MODES_DEBUG_NOPREAMBLE &&
-                m[j] > MODES_DEBUG_NOPREAMBLE_LEVEL)
-                dumpRawMessage(
-                               "Too high level in samples between 3 and 6",
-                               msg, m, j);
-            continue;
-        }
-        
-        /* Similarly samples in the range 11-14 must be low, as it is the
-         * space between the preamble and real data. Again we don't test
-         * bits too near to high levels, see above. */
-        if (m[j+11] >= high ||
-            m[j+12] >= high ||
-            m[j+13] >= high ||
-            m[j+14] >= high)
-        {
-            if (Modes.debug & MODES_DEBUG_NOPREAMBLE &&
-                m[j] > MODES_DEBUG_NOPREAMBLE_LEVEL)
-                dumpRawMessage(
-                               "Too high level in samples between 10 and 15",
-                               msg, m, j);
-            continue;
-        }
-        Modes.stat_valid_preamble++;
-        
-    good_preamble:
-        /* If the previous attempt with this message failed, retry using
-         * magnitude correction. */
-        if (use_correction) {
-            memcpy(aux, m+j+MODES_PREAMBLE_US*2, sizeof(aux));
-            if (j && detectOutOfPhase(m+j)) {
-                applyPhaseCorrection(m+j);
-                Modes.stat_out_of_phase++;
-            }
-            /* TODO ... apply other kind of corrections. */
-        }
-        
-        /* Decode all the next 112 bits, regardless of the actual message
-         * size. We'll check the actual message type later. */
-        errors = 0;
-        for (i = 0; i < MODES_LONG_MSG_BITS*2; i += 2) {
-            low = m[j+i+MODES_PREAMBLE_US*2];
-            high = m[j+i+MODES_PREAMBLE_US*2+1];
-            delta = low-high;
-            if (delta < 0) delta = -delta;
-            
-            if (i > 0 && delta < 256) {
-                bits[i/2] = bits[i/2-1];
-            } else if (low == high) {
-                /* Checking if two adiacent samples have the same magnitude
-                 * is an effective way to detect if it's just random noise
-                 * that was detected as a valid preamble. */
-                bits[i/2] = 2; /* error */
-                if (i < MODES_SHORT_MSG_BITS*2) errors++;
-            } else if (low > high) {
-                bits[i/2] = 1;
-            } else {
-                /* (low < high) for exclusion  */
-                bits[i/2] = 0;
-            }
-        }
-        
-        /* Restore the original message if we used magnitude correction. */
-        if (use_correction)
-            memcpy(m+j+MODES_PREAMBLE_US*2, aux, sizeof(aux));
-        
-        /* Pack bits into bytes */
-        for (i = 0; i < MODES_LONG_MSG_BITS; i += 8) {
-            msg[i/8] =
-            bits[i]<<7 |
-            bits[i+1]<<6 |
-            bits[i+2]<<5 |
-            bits[i+3]<<4 |
-            bits[i+4]<<3 |
-            bits[i+5]<<2 |
-            bits[i+6]<<1 |
-            bits[i+7];
-        }
-        
-        int msgtype = msg[0]>>3;
-        int msglen = modesMessageLenByType(msgtype)/8;
-        
-        /* Last check, high and low bits are different enough in magnitude
-         * to mark this as real message and not just noise? */
-        delta = 0;
-        for (i = 0; i < msglen*8*2; i += 2) {
-            delta += abs(m[j+i+MODES_PREAMBLE_US*2]-
-                         m[j+i+MODES_PREAMBLE_US*2+1]);
-        }
-        delta /= msglen*4;
-        
-        /* Filter for an average delta of three is small enough to let almost
-         * every kind of message to pass, but high enough to filter some
-         * random noise. */
-        if (delta < 10*255) {
-            use_correction = 0;
-            continue;
-        }
-        
-        /* If we reached this point, and error is zero, we are very likely
-         * with a Mode S message in our hands, but it may still be broken
-         * and CRC may not be correct. This is handled by the next layer. */
-        if (errors == 0 || (Modes.aggressive && errors < 3)) {
-            struct modesMessage mm;
-            
-            /* Decode the received message and update statistics */
-            decodeModesMessage(&mm, msg);
-            
-            /* Update statistics. */
-            if (mm.crcok || use_correction) {
-                if (errors == 0) Modes.stat_demodulated++;
-                if (mm.errorbit == -1) {
-                    if (mm.crcok)
-                        Modes.stat_goodcrc++;
-                    else
-                        Modes.stat_badcrc++;
-                } else {
-                    Modes.stat_badcrc++;
-                    Modes.stat_fixed++;
-                    if (mm.errorbit < MODES_LONG_MSG_BITS)
-                        Modes.stat_single_bit_fix++;
-                    else
-                        Modes.stat_two_bits_fix++;
-                }
-            }
-            
-            /* Output debug mode info if needed. */
-            if (use_correction == 0) {
-                if (Modes.debug & MODES_DEBUG_DEMOD)
-                    dumpRawMessage("Demodulated with 0 errors", msg, m, j);
-                else if (Modes.debug & MODES_DEBUG_BADCRC &&
-                         mm.msgtype == 17 &&
-                         (!mm.crcok || mm.errorbit != -1))
-                    dumpRawMessage("Decoded with bad CRC", msg, m, j);
-                else if (Modes.debug & MODES_DEBUG_GOODCRC && mm.crcok &&
-                         mm.errorbit == -1)
-                    dumpRawMessage("Decoded with good CRC", msg, m, j);
-            }
-            
-            /* Skip this message if we are sure it's fine. */
-            if (mm.crcok) {
-                j += (MODES_PREAMBLE_US+(msglen*8))*2;
-                good_message = 1;
-                if (use_correction)
-                    mm.phase_corrected = 1;
-            }
-            
-            /* Pass data to the next layer */
-            useModesMessage(&mm);
-        } else {
-            if (Modes.debug & MODES_DEBUG_DEMODERR && use_correction) {
-                printf("The following message has %d demod errors\n", errors);
-                dumpRawMessage("Demodulated with errors", msg, m, j);
-            }
-        }
-        
-        /* Retry with phase correction if possible. */
-        if (!good_message && !use_correction) {
-            j--;
-            use_correction = 1;
-        } else {
-            use_correction = 0;
-        }
-    }
-}
-
 /* When a new message is available, because it was decoded from the
- * RTL device, file, or received in the TCP input port, or any other
+ * tty device, file, or received in the TCP input port, or any other
  * way we can receive a decoded message, we call this function in order
  * to use the message.
  *
@@ -2448,11 +2096,8 @@ int getTermRows() {
 
 void showHelp(void) {
     printf(
-           "--device-index <index>   Select RTL device (default: 0).\n"
-           "--gain <db>              Set gain (default: max gain. Use -100 for auto-gain).\n"
-           "--enable-agc             Enable the Automatic Gain Control (default: off).\n"
-           "--freq <hz>              Set frequency (default: 1090 Mhz).\n"
-           "--ifile <filename>       Read data from file (use '-' for stdin).\n"
+           "--serial-port <name> <baudrate> <parity>  Select serial port device.\n"
+           "--file <filename>       Read data from file (use '-' for stdin).\n"
            "--interactive            Interactive mode refreshing data on screen.\n"
            "--interactive-rows <num> Max number of rows in interactive mode (default: 15).\n"
            "--interactive-ttl <sec>  Remove from list if idle for <sec> (default: 60).\n"
@@ -2469,7 +2114,6 @@ void showHelp(void) {
            "--stats                  With --ifile print stats at exit. No other output.\n"
            "--onlyaddr               Show only ICAO addresses (testing purposes).\n"
            "--metric                 Use metric units (meters, km/h, ...).\n"
-           "--snip <level>           Strip IQ file removing samples < level.\n"
            "--debug <flags>          Debug mode (verbose), see README for details.\n"
            "--help                   Show this help.\n"
            "\n"
@@ -2518,7 +2162,7 @@ int main(int argc, char **argv) {
             Modes.serial_port_addr = strdup(argv[++j]);
             Modes.speed = atoi(argv[++j]);
             Modes.parity = atoi(argv[++j]);
-        } else if (!strcmp(argv[j], "--ifile") && more) {
+        } else if (!strcmp(argv[j], "--file") && more) {
             Modes.filename = strdup(argv[++j]);
         } else if (!strcmp(argv[j], "--no-fix")) {
             Modes.fix_errors = 0;
@@ -2628,7 +2272,7 @@ int main(int argc, char **argv) {
         hexToBin(Modes.hex_data, msg);
         
         /* Signal to the other thread that we processed the available data
-         * and we want more (useful for --ifile). */
+         * and we want more (useful for --file). */
         Modes.data_ready = 0;
         pthread_cond_signal(&Modes.data_cond);
         
@@ -2639,26 +2283,16 @@ int main(int argc, char **argv) {
         pthread_mutex_unlock(&Modes.data_mutex);
         struct modesMessage mm;
         decodeModesMessage(&mm,msg);
+        Modes.stat_decoded_msg++;
         useModesMessage(&mm);
         backgroundTasks();
         pthread_mutex_lock(&Modes.data_mutex);
         if (Modes.exit) break;
     }
     
-    /* If --ifile and --stats were given, print statistics. */
+    /* If --file and --stats were given, print statistics. */
     if (Modes.stats && Modes.filename) {
-        printf("%lld valid preambles\n", Modes.stat_valid_preamble);
-        printf("%lld demodulated again after phase correction\n",
-               Modes.stat_out_of_phase);
-        printf("%lld demodulated with zero errors\n",
-               Modes.stat_demodulated);
-        printf("%lld with good crc\n", Modes.stat_goodcrc);
-        printf("%lld with bad crc\n", Modes.stat_badcrc);
-        printf("%lld errors corrected\n", Modes.stat_fixed);
-        printf("%lld single bit errors\n", Modes.stat_single_bit_fix);
-        printf("%lld two bits errors\n", Modes.stat_two_bits_fix);
-        printf("%lld total usable messages\n",
-               Modes.stat_goodcrc + Modes.stat_fixed);
+        printf("%lld decoded message\n", Modes.stat_decoded_msg);
     }
     return 0;
 }

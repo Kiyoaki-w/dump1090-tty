@@ -1,5 +1,5 @@
 *.o
-dump1090
+dump1090tty
 testfiles/*.bin
 misc
 frames.js
