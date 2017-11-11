@@ -3,34 +3,25 @@ Dump1090-tty README
 
 Dump 1090-tty is a Mode S decoder specifically designed for serial port devices.
 
-The main features are:
+Compared with dump1090, the main differences are:
 
-* Robust decoding of weak messages, with mode1090-tty many users observed
-  improved range compared to other popular decoders.
-* Network support: TCP30003 stream (MSG5...), Raw packets, HTTP.
-* Embedded HTTP server that displays the currently detected aircrafts on
-  Google Map.
-* Single bit errors correction using the 24 bit CRC.
-* Ability to decode DF11, DF17 messages.
-* Ability to decode DF formats like DF0, DF4, DF5, DF16, DF20 and DF21
-  where the checksum is xored with the ICAO address by brute forcing the
-  checksum field using recently seen ICAO addresses.
-* Decode raw hex text from file (using --file command line switch).
-* Interactive command-line-interface mode where aircrafts currently detected
-  are shown as a list refreshing as more data arrives.
-* CPR coordinates decoding and track calculation from velocity.
-* TCP server streaming and receiving raw data to/from connected clients
-  (using --net).
-
-While from time to time I still add / fix stuff in my fork, I target
-minimalism of the implementation. However there is a
-[much more feature complete fork](https://github.com/MalcolmRobb/dump1090)
-available, developed by MalcolmRobb.
+* Replace RTL-SDR with serial port device.
+* Support auto detect device name begin with "/dev/ttyS" and "/dev/ttyUSB".
+* Support text file input (using —file command line).
+* Network support trajectory stream (default port 30004). Trajectory message format: "!(flight),(longitude),(latitude),(altitude),(speed),(angle),(unix timestamp)\*" like "!CSN6909,115.9741,39.8630,10000,286,145,1510242849\*"
 
 Installation
 ---
 
 Type "make".
+
+## Simple usage
+
+Auto detect a serial port and use default baudrate 3,000,000 and no parity.
+
+```
+./dump1090tty
+```
 
 Normal usage
 ---

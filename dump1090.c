@@ -44,6 +44,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
+#include <dirent.h>
 #include "anet.h"
 
 #define MODES_DEFAULT_WIDTH        1000
@@ -252,6 +253,24 @@ static long long mstime(void) {
 }
 
 /* =============================== Initialization =========================== */
+
+void autoDetectSerialPortAddr(void) {
+    DIR *d;
+    char tty_str[256] = "/dev/";
+    struct dirent *dir;
+    d = opendir("/dev");
+    while ((dir = readdir(d)) != NULL) {
+        if (!strncmp(dir->d_name, "ttyS", 4) ||
+            !strncmp(dir->d_name, "ttyUSB", 6)
+            ) {
+            strncpy(tty_str + 5, dir->d_name, sizeof(tty_str) - 5);
+            Modes.serial_port_addr = strdup(tty_str);
+            printf("Auto detect device: %s\n", tty_str);
+            break;
+        }
+    }
+    closedir(d);
+}
 
 void modesInitConfig(void) {
     Modes.serial_port_addr = NULL;
@@ -2119,8 +2138,10 @@ int getTermRows() {
 
 void showHelp(void) {
     printf(
-           "--serial-port <name> <baudrate> <parity>  Select serial port device.\n"
-           "--file <filename>       Read data from file (use '-' for stdin).\n"
+           "--name                   Serial port device name. (default: the first device match /dev/ttyS* or /dev/ttyUSB*).\n"
+           "--speed                  Serial port baudrate (default: 3000000).\n"
+           "--parity                 Serial port parity, none when 0 (default: 0).\n"
+           "--file <filename>        Read data from file (use '-' for stdin).\n"
            "--interactive            Interactive mode refreshing data on screen.\n"
            "--interactive-rows <num> Max number of rows in interactive mode (default: 15).\n"
            "--interactive-ttl <sec>  Remove from list if idle for <sec> (default: 60).\n"
@@ -2181,9 +2202,19 @@ int main(int argc, char **argv) {
     for (j = 1; j < argc; j++) {
         int more = j+1 < argc; /* There are more arguments. */
         
-        if (!strcmp(argv[j], "--serial-port") && more) {
-            Modes.serial_port_addr = strdup(argv[++j]);
+        if (!strcmp(argv[j], "--name") && more) {
+            char *name = argv[++j];
+            /* In Cygwin, COM(n) in Windows will map to /dev/ttys(n - 1) */
+            if (!strncmp(name, "com", 3) || !(strncmp(name, "COM", 3))) {
+                char addr[256] = "/dev/ttyS";
+                sprintf(addr + 9, "%d", atoi(name + 3) - 1);
+                Modes.serial_port_addr = strdup(addr);
+            } else {
+                Modes.serial_port_addr = strdup(name);
+            }
+        } else if (!strcmp(argv[j], "--speed")) {
             Modes.speed = atoi(argv[++j]);
+        } else if (!strcmp(argv[j], "--parity")) {
             Modes.parity = atoi(argv[++j]);
         } else if (!strcmp(argv[j], "--file") && more) {
             Modes.filename = strdup(argv[++j]);
@@ -2262,8 +2293,6 @@ int main(int argc, char **argv) {
     modesInit();
     if (Modes.net_only) {
         fprintf(stderr, "Net-only mode, no tty device or file open.\n");
-    } if (Modes.serial_port_addr != NULL) {
-        modesInitSerialPort();
     } else if (Modes.filename != NULL) {
         if (Modes.filename[0] == '-' && Modes.filename[1] == '\0') {
             Modes.fd = STDIN_FILENO;
@@ -2272,8 +2301,14 @@ int main(int argc, char **argv) {
             exit(1);
         }
     } else {
-        fprintf(stderr, "Arguments needed, add --help.\n");
-        exit(1);
+        if (Modes.serial_port_addr == NULL) {
+            autoDetectSerialPortAddr();
+        }
+        if (Modes.serial_port_addr == NULL) {
+            fprintf(stderr, "No valid serial port detected. Please set --name manually.\n");
+            exit(1);
+        }
+        modesInitSerialPort();
     }
     if (Modes.net) modesInitNet();
     
