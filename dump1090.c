@@ -2138,9 +2138,9 @@ int getTermRows() {
 
 void showHelp(void) {
     printf(
-           "--name                   Serial port device name. (default: the first device match /dev/ttyS* or /dev/ttyUSB*).\n"
-           "--speed                  Serial port baudrate (default: 3000000).\n"
-           "--parity                 Serial port parity, none when 0 (default: 0).\n"
+           "--name <path>            Serial port device name. (default: the first device match /dev/ttyS* or /dev/ttyUSB*).\n"
+           "--speed <baudrate>       Serial port baudrate (default: 3000000).\n"
+           "--parity                 Enable serial port parity.\n"
            "--file <filename>        Read data from file (use '-' for stdin).\n"
            "--interactive            Interactive mode refreshing data on screen.\n"
            "--interactive-rows <num> Max number of rows in interactive mode (default: 15).\n"
@@ -2152,6 +2152,7 @@ void showHelp(void) {
            "--net-ri-port <port>     TCP listening port for raw input (default: 30001).\n"
            "--net-http-port <port>   HTTP server port (default: 8080).\n"
            "--net-sbs-port <port>    TCP listening port for BaseStation format output (default: 30003).\n"
+           "--net-trj-port <port>    TCP listening port for trajectory output (default: 30004).\n"
            "--no-fix                 Disable single-bits error correction using CRC.\n"
            "--no-crc-check           Disable messages with broken CRC (discouraged).\n"
            "--aggressive             More CPU for more messages (two bits fixes, ...).\n"
@@ -2215,7 +2216,7 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[j], "--speed")) {
             Modes.speed = atoi(argv[++j]);
         } else if (!strcmp(argv[j], "--parity")) {
-            Modes.parity = atoi(argv[++j]);
+            Modes.parity = 1;
         } else if (!strcmp(argv[j], "--file") && more) {
             Modes.filename = strdup(argv[++j]);
         } else if (!strcmp(argv[j], "--no-fix")) {

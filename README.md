@@ -29,20 +29,20 @@ Normal usage
 To capture traffic directly from your serial port device and show the captured traffic
 on standard output with serial name "/dev/ttyUSB0", 3000000 baudrate and no parity, run the program:
 
-    ./dump1090tty --serial-port /dev/ttyUSB0 3000000 0
+    ./dump1090tty --name /dev/ttyUSB0 --speed 3000000
 
 To just output hexadecimal messages:
 
-    ./dump1090tty --serial-port /dev/ttyUSB0 3000000 0 --raw
+    ./dump1090tty --name /dev/ttyUSB0 --speed 3000000 --raw
 
 To run the program in interactive mode:
 
-    ./dump1090tty --serial-port /dev/ttyUSB0 3000000 0 --interactive
+    ./dump1090tty --name /dev/ttyUSB0 --speed 3000000 --interactive
 
 To run the program in interactive mode, with networking support, and connect
 with your browser to http://localhost:8080 to see live traffic:
 
-    ./dump1090tty --serial-port /dev/ttyUSB0 3000000 0 --interactive --net
+    ./dump1090tty --name /dev/ttyUSB0 --speed 3000000 --interactive --net
 
 In interactive mode it is possible to have a less information dense but more
 "arcade style" output, where the screen is refreshed every second displaying
@@ -125,9 +125,6 @@ like this:
 It is important to note that what is received via port 30001 is also
 broadcasted to clients listening to port 30002.
 
-In general everything received from port 30001 is handled exactly like the
-normal traffic from RTL devices or from file when --ifile is used.
-
 It is possible to use Dump1090-tty just as an hub using --ifile with /dev/zero
 as argument as in the following example:
 
@@ -189,24 +186,13 @@ Debug mode includes an optional javascript output that is used to visualize
 packets using a web browser, you can use the file debug.html under the
 'tools' directory to load the generated frames.js file.
 
-How this program works?
----
-
-The code is very documented and written in order to be easy to understand.
-For the diligent programmer with a Mode S specification on his hands it
-should be trivial to understand how it works.
-
-The algorithms I used were obtained basically looking at many messages
-as displayed using a trow-away SDL program, and trying to model the algorithm
-based on how the messages look graphically.
-
 How to test the program?
 ---
 
-If you have an RTLSDR device and you happen to be in an area where there
+If you have an serial port device and you happen to be in an area where there
 are aircrafts flying over your head, just run the program and check for signals.
 
-However if you don't have an RTLSDR device, or if in your area the presence
+However if you don't have an serial port device, or if in your area the presence
 of aircrafts is very limited, you may want to try the sample file distributed
 with the Dump1090-tty distribution under the "testfiles" directory.
 
