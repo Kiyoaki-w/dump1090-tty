@@ -253,20 +253,27 @@ static long long mstime(void) {
 }
 
 /* =============================== Initialization =========================== */
-
-void autoDetectSerialPortAddr(void) {
+void detectSerialPort(int list_all) {
     DIR *d;
     char tty_str[256] = "/dev/";
     struct dirent *dir;
     d = opendir("/dev");
+    if (list_all) {
+        printf("Serial port device:\n");
+    }
     while ((dir = readdir(d)) != NULL) {
         if (!strncmp(dir->d_name, "ttyS", 4) ||
-            !strncmp(dir->d_name, "ttyUSB", 6)
+            !strncmp(dir->d_name, "ttyUSB", 6) ||
+            !strncmp(dir->d_name, "cu.usbserial", 12)
             ) {
             strncpy(tty_str + 5, dir->d_name, sizeof(tty_str) - 5);
-            Modes.serial_port_addr = strdup(tty_str);
-            printf("Auto detect device: %s\n", tty_str);
-            break;
+            if (list_all) {
+                printf("%s\n", tty_str);
+            } else {
+                Modes.serial_port_addr = strdup(tty_str);
+                printf("Auto detect device: %s\n", tty_str);
+                break;
+            }
         }
     }
     closedir(d);
@@ -2160,6 +2167,7 @@ void showHelp(void) {
            "--onlyaddr               Show only ICAO addresses (testing purposes).\n"
            "--metric                 Use metric units (meters, km/h, ...).\n"
            "--debug <flags>          Debug mode (verbose), see README for details.\n"
+           "--list                   Show all serial device name."
            "--help                   Show this help.\n"
            "\n"
            "Debug mode flags: d = Log frames decoded with errors\n"
@@ -2270,6 +2278,9 @@ int main(int argc, char **argv) {
                 }
                 f++;
             }
+        } else if (!strcmp(argv[j], "--list")) {
+            detectSerialPort(1);
+            exit(0);
         } else if (!strcmp(argv[j], "--stats")) {
             Modes.stats = 1;
         } else if (!strcmp(argv[j], "--snip") && more) {
@@ -2303,7 +2314,7 @@ int main(int argc, char **argv) {
         }
     } else {
         if (Modes.serial_port_addr == NULL) {
-            autoDetectSerialPortAddr();
+            detectSerialPort(0);
         }
         if (Modes.serial_port_addr == NULL) {
             fprintf(stderr, "No valid serial port detected. Please set --name manually.\n");
