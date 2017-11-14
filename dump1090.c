@@ -328,14 +328,12 @@ void modesInit(void) {
 int setSerialPortAttribs(int fd, int speed, int parity) {
     struct termios tty;
     memset (&tty, 0, sizeof tty);
-    if (tcgetattr (fd, &tty) != 0)
-    {
+    if (tcgetattr (fd, &tty) != 0) {
         perror("tcgetattr");
         return -1;
     }
     
-    cfsetospeed (&tty, speed);
-    cfsetispeed (&tty, speed);
+    cfsetspeed(&tty, speed);
     
     tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
     // disable IGNBRK for mismatched speed tests; otherwise receive break
@@ -2167,7 +2165,7 @@ void showHelp(void) {
            "--onlyaddr               Show only ICAO addresses (testing purposes).\n"
            "--metric                 Use metric units (meters, km/h, ...).\n"
            "--debug <flags>          Debug mode (verbose), see README for details.\n"
-           "--list                   Show all serial device name."
+           "--list                   Show all serial device name.\n"
            "--help                   Show this help.\n"
            "\n"
            "Debug mode flags: d = Log frames decoded with errors\n"
