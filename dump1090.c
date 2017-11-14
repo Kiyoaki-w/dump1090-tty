@@ -237,8 +237,8 @@ void useModesMessage(struct modesMessage *mm);
 int fixSingleBitErrors(unsigned char *msg, int bits);
 int fixTwoBitsErrors(unsigned char *msg, int bits);
 int modesMessageLenByType(int type);
-void sigWinchCallback(void);
-int getTermRows(void);
+void sigWinchCallback();
+int getTermRows();
 
 /* ============================= Utility functions ========================== */
 
