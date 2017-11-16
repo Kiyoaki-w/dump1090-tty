@@ -1791,8 +1791,16 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
  * trajectory message format like: !CSN6909 ,115.9741,39.8630,10000,286,145,1510242849* */
 void modesSendTrajectoryOutput(struct aircraft *a) {
     char msg[256];
+    int altitude = a->altitude, speed = a->speed;
+    if (Modes.metric) {
+        altitude /= 3.2828;
+        speed *= 1.852;
+    }
+    if (a->lon == 0 || a->lat == 0) {
+        return;
+    }
     int n = sprintf(msg, "!%s,%.4lf,%.4lf,%d,%d,%d,%ld*",
-                    a->flight, a->lon, a->lat, a->altitude, a->speed, a->track, a->seen);
+                    a->flight, a->lon, a->lat, altitude, speed, a->track, a->seen);
     modesSendAllClients(Modes.trs, msg, n);
 }
 
