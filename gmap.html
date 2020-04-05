@@ -1,180 +1,1064 @@
-<!DOCTYPE html>
-
+<!DOCTYPE <!DOCTYPE html>
 <html>
-  <head>
-    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Flight Data Visualization</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" media="screen" href="main.css" />
+    <link rel="stylesheet" href="http://cdn.static.runoob.com/libs/bootstrap/3.3.7/css/bootstrap.min.css">
+    <script src="https://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+    <!-- todo: Add for GPS trans -->
+    <script type="text/javascript" src="http://api.map.baidu.com/api?v=3.0&ak=LEAfhW71ab81sBCx7jx1sFYRVU4Ulynx"></script>
+    <script src="http://cdn.static.runoob.com/libs/bootstrap/3.3.7/js/bootstrap.min.js"></script>
     <style type="text/css">
-      html { height: 100% }
-      body { height: 100%; margin: 0; padding: 0 }
-      #map_canvas { height: 100% }
-      #info {
-        position: absolute;
-        width:20%;
-        height:100%;
-        bottom:0px;
-        right:0px;
-        top:0px;
-        background-color: white;
-        border-left:1px #666 solid;
-        font-family:Helvetica;
-      }
-      #info div {
-        padding:0px;
-        padding-left:10px;
-        margin:0px;
-      }
-      #info div h1 {
-        margin-top:10px;
-        font-size:16px;
-      }
-      #info div p {
-        font-size:14px;
-        color:#333;
-      }
+        .popover {max-width: 2000px; margin-right: 10px}
+        .popover-inner {max-width:1800px}
+        #infowindow {
+            z-index: 1060;
+            max-width: 2000px;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            font-style: normal;
+            font-weight: normal;
+            letter-spacing: normal;
+            line-break: auto;
+            text-align: left;
+            text-align: start;
+            font-size: 14px;
+            background-color: #fff;
+            background-clip: padding-box;
+            border: 1px solid #ccc;
+            border: 1px solid rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            -webkit-box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
+        }
     </style>
-    <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js">
-    </script>
-    <script type="text/javascript"
-      src="https://maps.googleapis.com/maps/api/js?sensor=true">
-    </script>
-    <script type="text/javascript">
-    Map=null;
-    CenterLat=45.0;
-    CenterLon=9.0;
-    Planes={};
-    NumPlanes = 0;
-    Selected=null
+</head>
+<body onload="initialize()">
 
-    function getIconForPlane(plane) {
-        var r = 255, g = 255, b = 0;
-        var maxalt = 40000; /* Max altitude in the average case */
-        var invalt = maxalt-plane.altitude;
-        var selected = (Selected == plane.hex);
+    <!-- 文字类内容部分 -->
+    <div class="container" style="width:100%;position:absolute;z-index:2">
 
-        if (invalt < 0) invalt = 0;
-        b = parseInt(255/maxalt*invalt);
-        return {
-            strokeWeight: (selected ? 2 : 1),
-            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-            scale: 5,
-            fillColor: 'rgb('+r+','+g+','+b+')',
-            fillOpacity: 0.9,
-            rotation: plane.track
-        };
+        <!-- 导航栏 -->
+        <div id="nav" class="row-fluid" style="font-size:17px">
+            <nav class="navbar navbar-light navbar-fixed-top" style="background-color:rgba(255, 255, 255, 0.9)">
+                <div><p class="navbar-brand" style="font-size:25px"></p></div>
+                <div>
+                    <ul class="nav navbar-nav">
+                        <!-- 暂时移除地图一栏 <li class="active"><a href="#">地图</a></li> -->
+                        <li class="dropdown">
+                            <a href="#" class="dropdown-toggle" data-toggle="dropdown">
+                                设置
+                                <b class="caret"></b>
+                            </a>
+                            <ul class="dropdown-menu">
+                                <li><a href="#modal-general" role="button" class="btn" data-toggle="modal" style="text-align:left">通用</a></li>
+                                <li class="divider"></li>
+                                <li><a href="#modal-map" role="button" class="btn" data-toggle="modal" style="text-align:left">地图</a></li>
+                                <li class="divider"></li>
+                                <li><a href="#modal-label" role="button" class="btn" data-toggle="modal" style="text-align:left">标签</a></li>
+                                <!--
+                                <li class="divider"></li>
+                                <li><a href="#modal-filter" role="button" class="btn" data-toggle="modal" style="text-align:left">过滤器</a></li>
+                                -->
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+
+                <button type="button" class="btn btn-default navbar-btn navbar-right" 
+                        data-toggle="collapse" data-target="#infowindow"
+                        style="margin-right:11%">
+                    详细信息
+                </button>
+            </nav> 
+        </div>
+
+        <!-- 内容栏 -->
+        <div id="content" class="row" style="margin:70px 0px 0px 75%; height:100%; pointer-events:none">
+            
+
+            <!-- 列表等详细信息 -->
+            <!-- 目前设置为宽度为1的列，考虑通过popover弹窗或折叠方式实现 -->
+            <!-- 弹窗好看！-->
+            <!-- 弹窗太难改折叠 -->
+            <!-- 主要是弹窗不能动态改变内容 -->
+            <div id="infowindow" class="col-md-12 collapse-in collapse" style="width:100%; pointer-events:none ">
+                <div id="numinfo" class="row" style="font-size:20px; margin-left:5px; margin-top:20px; pointer-events:none"></div><hr/>
+                <div id="selectedinfo" class="row" style="font-size:20px;margin-left:5px; pointer-events:none">info</div> <hr/>
+                <!--
+                <div class="row" style="overflow-y:auto; max-height:50%">
+                    <table class="table table-striped">
+                        <thead>
+                        <tr>
+                            <th scope="col">#</th>
+                            <th scope="col">Flight</th>
+                            <th scope="col">Speed</th>
+                            <th scope="col">Altitude</th>
+                            <th scope="col">ICAO</th>
+                        </tr>
+                        </thead>
+                        <tbody id='tablebody'>
+                        <tr>
+                            <th scope="row">1</th>
+                            <td>Mark</td>
+                            <td>Otto</td>
+                            <td>@mdo</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+                -->
+            </div>
+            <!-- todo:用panel面板功能进行美化 -->
+        </div>
+
+    </div>
+
+
+    <!-- 地图主体 -->
+    <div id="bmapcontainer" style="height:100%;z-index:3;position:fixed"></div>
+
+    
+    <!-- 与“设置”对应的弹出模态框 -->
+    <!-- 通用 -->
+    <div id="modal-general" class="modal fade bd-example-modal-md" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-md">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLabel">通用</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="row" style="width:90%; margin-left:5%">
+                        <div class="col-sm-12">
+                            <label class="checkbox-inline">
+                                <input type="checkbox" id="planeTracking">跟踪当前选中的飞机
+                            </label><br><hr/>
+                            <label class="checkbox-inline">
+                                <input type="checkbox" id="traceShowing">显示所有飞机的轨迹
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-primary">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 地图 -->
+    <div id="modal-map" class="modal fade bd-example-modal-lg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">地图</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <!-- 地图样式 -->
+                    <div class="row" style="width:90%; margin-left:5%">
+                        <h4>地图样式</h4><hr/>
+                        <div class="col-sm-6">
+                            <label class="radio-inline">
+                                <input type="radio" name="mapstyle" id="optionsRadios1" value="light">明亮
+                                <img src="https://raw.githubusercontent.com/Kiyoaki-w/dump1090-tty/master/img/map_style_light.png" class="img-responsive" alt="light" width="100%" height="300">
+                            </label>    
+                        </div>
+                        <div class="col-sm-6">
+                            <label class="radio-inline">
+                                <input type="radio" name="mapstyle" id="optionsRadios2" value="night">昏暗
+                                <img src="https://raw.githubusercontent.com/Kiyoaki-w/dump1090-tty/master/img/map_style_night.png" class="img-responsive" alt="night" width="100%" height="300">
+                            </label>    
+                        </div>
+                    </div>
+                    <!-- 范围环 -->
+                    <div class="row" style="width:90%; margin-left:5%; margin-top:5%">
+                        <h4>范围环</h4><hr/>
+                        <div class="col-sm-12">
+                            <label class="checkbox-inline">
+                                <input type="checkbox" id="rangeCircleOpen" data-toggle="collapse" data-target="#rangeCircleSettings">开启范围环
+                            </label>
+                            <div class="form-check collapse-in collapse form-check-inline" id="rangeCircleSettings" style="margin-top:5px; margin-left:25px">
+                                <label class="form-check-label">设置范围环中心：</label><br>
+                                <label class="form-check-label" for="rangeInput_lon">经度：</label>
+                                <input class="form-check-input" type="text" id="rangeInput_lon" placeholder="范围环中心经度">
+                                <label class="form-check-label" for="rangeInput_lat">纬度：</label>
+                                <input class="form-check-input" type="text" id="rangeInput_lat" placeholder="范围环中心纬度"><br>
+                                <label class="form-check-label" for="rangeInput_number">范围环最大半径：</label>
+                                <input class="form-check-input" type="number" min="1" id="rangeInput_number" placeholder="范围环最大半径">
+                                <label class="form-check-label" for="rangeInput_number">千米</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-primary">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 标签 -->
+    <div id="modal-label" class="modal fade bd-example-modal-md" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-md">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">标签</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <!-- 选择标签信息 -->
+                    <div class="row" style="width:90%; margin-left:5%" role="form">
+                        <h4>选择所需标签信息</h4>
+                        <h5>(地图缩放等级大于9时显示全部标签)</h5><hr/>
+                        <div class="col-sm-12 form-group">
+                            <label class="checkbox">
+                                <label class="checkbox-inline">
+                                    <input type="checkbox" id="labelFlight" checked="true">航班号
+                                </label>
+                                <label class="checkbox-inline">
+                                    <input type="checkbox" id="labelAltitude">海拔
+                                </label>
+                                <label class="checkbox-inline">
+                                    <input type="checkbox" id="labelSpeed">速度
+                                </label>
+                                <label class="checkbox-inline">
+                                    <input type="checkbox" id="labelICAO">ICAO
+                                </label>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-primary">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 过滤器 -->
+    <!-- 
+    <div id="modal-filter" class="modal fade bd-example-modal-md" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-md">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLabel">过滤器</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="row" style="width:95%; margin-left:2.5%">
+                        <div class="col-sm-12">
+                            <label class="checkbox-inline">
+                                <input type="checkbox" id="speedFilter">启用速度过滤器
+                            </label><br>
+                            <div class="form-check form-check-inline" style="margin-top:10px; margin-left:25px">
+                                <label class="form-check-label" for="speed_min">速度区间：</label>
+                                <input class="form-check-input" type="number" id="speed_min" min='1' placeholder="区间下限">
+                                <input class="form-check-input" type="number" id="speed_max" min='1' placeholder="区间上限">
+                                <label class="form-check-label" for="speed_max">knots</label>
+                            </div><hr/>    
+                            <label class="checkbox-inline">
+                                <input type="checkbox" id="altitudeFilter">启用海拔高度过滤器
+                            </label>
+                            <div class="form-check form-check-inline" style="margin-top:10px; margin-left:25px">
+                                <label class="form-check-label" for="altitude_min">速度区间：</label>
+                                <input class="form-check-input" type="number" id="altitude_min" min='1' placeholder="区间下限">
+                                <input class="form-check-input" type="number" id="altitude_max" min='1' placeholder="区间上限">
+                                <label class="form-check-label" for="altitude_max">feets</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-primary">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    -->
+    
+
+
+
+    <script>
+
+
+    /**
+     * 地图风格 
+     * 详见http://lbsyun.baidu.com/img-editor.html
+     * _night为黑暗版 _light为明亮版
+     */
+
+    var mapStyle_light2 = {styleJson:
+        [
+          {
+                    "featureType": "poilabel",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "off"
+                    }
+          },
+          {
+                    "featureType": "subway",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "off"
+                    }
+          },
+          {
+                    "featureType": "railway",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "off"
+                    }
+          },
+          {
+                    "featureType": "subwaystation",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "off"
+                    }
+          },
+          {
+                    "featureType": "medical",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "off"
+                    }
+          },
+          {
+                    "featureType": "scenicspots",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "on"
+                    }
+          },
+          {
+                    "featureType": "education",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "on"
+                    }
+          },
+          {
+                    "featureType": "town",
+                    "elementType": "all",
+                    "stylers": {
+                              "visibility": "off"
+                    }
+          },
+          {
+                    "featureType": "highway",
+                    "elementType": "geometry",
+                    "stylers": {
+                              "color": "#ccccccff",
+                              "lightness": 32,
+                              "saturation": -100
+                    }
+          }
+        ]
     }
 
-    function selectPlane() {
-        if (!Planes[this.planehex]) return;
-        var old = Selected;
-        Selected = this.planehex;
-        if (Planes[old]) {
-            /* Remove the highlight in the previously selected plane. */
-            Planes[old].marker.setIcon(getIconForPlane(Planes[old]));
+
+    var mapStyle_night = {styleJson:
+        [
+        {
+                    "featureType": "town",
+                    "elementType": "labels",
+                    "stylers": {
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "district",
+                    "elementType": "all",
+                    "stylers": {
+                            "color": "#000000ff",
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "poilabel",
+                    "elementType": "all",
+                    "stylers": {
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "road",
+                    "elementType": "all",
+                    "stylers": {
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "manmade",
+                    "elementType": "all",
+                    "stylers": {
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "building",
+                    "elementType": "all",
+                    "stylers": {
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "green",
+                    "elementType": "all",
+                    "stylers": {
+                            "visibility": "off"
+                    }
+        },
+        {
+                    "featureType": "city",
+                    "elementType": "all",
+                    "stylers": {}
+        },
+        {
+                    "featureType": "land",
+                    "elementType": "geometry",
+                    "stylers": {
+                            "color": "#444444ff"
+                    }
+        },
+        {
+                    "featureType": "water",
+                    "elementType": "geometry",
+                    "stylers": {
+                            "color": "#cfe2f3ff"
+                    }
         }
-        Planes[Selected].marker.setIcon(getIconForPlane(Planes[Selected]));
-        refreshSelectedInfo();
+    ]
+    };
+
+    var mapStyle_light = {styleJson:
+        [
+        {
+                "featureType": "town",
+                "elementType": "labels",
+                "stylers": {
+                            "visibility": "off"
+                }
+        },
+        {
+                "featureType": "district",
+                "elementType": "all",
+                "stylers": {
+                            "color": "#000000ff",
+                            "visibility": "off"
+                }
+        },
+        {
+                "featureType": "poilabel",
+                "elementType": "all",
+                "stylers": {
+                            "visibility": "off"
+                }
+        },
+        {
+                "featureType": "road",
+                "elementType": "all",
+                "stylers": {
+                            "visibility": "off"
+                }
+        },
+        {
+                "featureType": "manmade",
+                "elementType": "all",
+                "stylers": {
+                            "visibility": "off"
+                }
+        }
+    ]
+    }; 
+
+    
+
+    /* 地图的初始化及基本设置 */
+    var map = new BMap.Map("bmapcontainer",{enableMapClick:false}); //初始化地图，禁止点击地图自带图标
+    var point = new BMap.Point(110.3380410000,25.1205800000); //贵阳 （为配合/testfile/complex.txt数据）
+    var point2 = new BMap.Point(116.404,39.915); //北京（为配合实际测量地点）
+    var mapStyleIndic = null; //记录地图风格信息
+    map.centerAndZoom(point2, 9); //中心焦点及放大程度
+    map.enableScrollWheelZoom(true); //允许滚轮放大、缩小
+    map.setMapStyle(mapStyle_light); //初始化地图风格
+    
+    var mapType = new BMap.MapTypeControl({anchor: BMAP_ANCHOR_BOTTOM_RIGHT});
+    map.addControl(mapType); //右下角默认地图控件
+    map.setCurrentCity("北京"); //设置3d图城市
+
+
+    /* 飞机功能相关的初始化 */
+    var Planes = {};
+    var NumOfPlanes = 0;
+    var Selected = null; //用于标记当前选中的飞机的hex 
+    var historyPoints = {}; //历史位置信息，用以绘制轨迹
+    var planeTrace = {}; //储存轨迹
+    var point_now = {}; //当前位置
+    var traceOld = null; //储存BMap.Polyline
+    var traceNew = null; 
+
+    /* 绘圆相关功能的初始化 */
+    var circleRange = null; //储存圆半径(最大的)
+    var circleRangeOld = null;
+    var circleLon = null;
+    var circleLonOld = null;
+    var circleLat = null;
+    var circleLatOld = null;
+    /* 初始化圆形覆盖物 */
+    var rangeCircleMarker = [];
+    for (var i = 0; i < 5; i++){
+        var circleInfo = {
+            strokeColor:"grey", 
+            strokeWeight:(i % 2 == 0 ? '2' : '1'), 
+            enableClicking:false, 
+            fillColor:"none" 
+        };
+        rangeCircleMarker[i] = new BMap.Circle(map.getCenter(), 100000, circleInfo);
     }
     
-    function refreshGeneralInfo() {
-        var i = document.getElementById('geninfo');
+    /* 轨迹全部显示模式与选中显示模式的切换 */
+    $("#traceShowing").change(function() {
+        var traceShowIndic = $("#traceShowing");
+        /* 若为由非全显切换到全显，显示全部轨迹 */
+        if (traceShowIndic.prop("checked")) {
+            for (var p in Planes) {
+                for (var i = 0; i < planeTrace[p].length; i++){
+                    map.addOverlay(planeTrace[p][i]);
+                }
+            }
+        }
+        /* 若由全显切换到非全显，隐藏全部轨迹，若有选中则显示选中的 */
+        else {
+            for (var p in Planes) {
+                for (var i = 0; i < planeTrace[p].length; i++){
+                    map.removeOverlay(planeTrace[p][i]);
+                }
+            }
+            if (Selected) {
+                for (var i = 0; i < planeTrace[Selected].length; i++){
+                    map.addOverlay(planeTrace[Selected][i]);
+                }
+            }
+        } 
+    });
 
-        i.innerHTML = NumPlanes+' planes on screen.';
+    /* 根据是否为选中的飞机，返回绘制飞机所需参数,调用百度地图控件的 */
+    function setIconInfo2(plane){
+        var selected = (plane.hex === Selected); //判断是否为所选中的飞机     
+        var FlightInfo = {
+            icon: new BMap.Symbol(BMap_Symbol_SHAPE_PLANE, {
+            scale: 1.5,
+            strokeWeight: 1, 
+            fillColor: (selected ? 'lime' : 'yellow'),
+            fillOpacity: 0.8, //对BMap矢量图标，若不设置透明度就无法染色
+            rotation: plane.track
+        })
+        };        
+        return FlightInfo; //返回百度地图绘制图标所需参数       
     }
 
-    function refreshSelectedInfo() {
-        var i = document.getElementById('selinfo');
-        var p = Planes[Selected];
+    /* 根据是否为选中的飞机，返回绘制飞机所需参数,调用自定义图标的 */
+    function setIconInfo(plane){
+        var selected = (plane.hex === Selected); //判断是否为所选中的飞机  
+        var angle = null; //angle应为2位数
+        var myIcon = null;
+        var str = null;
+        if (selected) {
+            str = 'planes/selected/';
+        }
+        else{
+            str = 'planes/';
+        }
+        angle = Math.round( plane.track / 10 ) * 10; //四舍五入地将角度取整数倍以对应图标
+        if (angle > 350){
+            angle = 0;
+        }
+        if (angle==0){
+            myIcon = new BMap.Icon("https://raw.githubusercontent.com/Kiyoaki-w/dump1090-tty/master/img/" + str + "B747_S000.png", new BMap.Size(44,44));            
+        }
+        if (angle < 100 && angle != 0){
+            myIcon = new BMap.Icon("https://raw.githubusercontent.com/Kiyoaki-w/dump1090-tty/master/img/" + str + "B747_S0" + angle + ".png", new BMap.Size(44,44));            
+        }
+        if (angle > 90){
+            myIcon = new BMap.Icon("https://raw.githubusercontent.com/Kiyoaki-w/dump1090-tty/master/img/" + str + "B747_S" + angle + ".png", new BMap.Size(44,44));
+        }   
+        var FlightInfo = {icon: myIcon};        
+        return FlightInfo; //返回百度地图绘制图标所需参数       
+    }
 
+
+    /*
+    function setShadowInfo(plane){
+        var FlightInfo = {
+            icon: new BMap.Symbol(BMap_Symbol_SHAPE_PLANE, {
+            scale: 2,
+            strokeWeight: 1, 
+            fillColor: "grey",
+            fillOpacity: 0.8, //对BMap矢量图标，若不设置透明度就无法染色
+            rotation: plane.track
+        })
+        };        
+        return FlightInfo; //返回百度地图绘制图标所需参数       
+    }
+    */
+
+
+    /* 轨迹模式1：根据飞机当前海拔，返回绘制轨迹所需参数，虚线，海拔越高越蓝 */
+    function setTraceInfo2(plane){
+        var r = 0;
+        var g = 0;
+        var b = null;
+        var maxAltitude = 40000; //最大海拔40000feet
+        if (plane.altitude > maxAltitude) {
+            b = 255; 
+        }
+        else{
+            b = 100 + 155 * plane.altitude / maxAltitude;
+        }
+        var TraceInfo = {
+            strokeColor: 'rgb('+r+','+g+','+b+')', 
+            strokeWeight: 2, 
+            strokeOpacity: 0.5,
+            strokeStyle: 'dashed'
+        }
+        return TraceInfo;
+    }
+
+    /* 轨迹模式2：根据飞机当前海拔，返回绘制轨迹所需参数，实线，海拔越高越透明度越低 */
+    function setTraceInfo(plane){
+        var b = null;
+        var maxAltitude = 40000; //最大海拔40000feet
+        if (plane.altitude > maxAltitude) {
+            b = 1; 
+        }
+        else{
+            b = plane.altitude / maxAltitude;
+        }
+        var TraceInfo = {
+            strokeColor: 'black', 
+            strokeWeight: 2, 
+            strokeOpacity: b,
+            strokeStyle: 'solid'
+        }
+        return TraceInfo;
+    }
+
+    /* 根据复选框选中情况，返回飞机标牌文本 */
+    function getLabelText(plane){
+        var text = '';
+        var lab_ICAO = $("#labelICAO").prop("checked");
+        var lab_Flight = $("#labelFlight").prop("checked");
+        var lab_Altitude = $("#labelAltitude").prop("checked");
+        var lab_Speed = $("#labelSpeed").prop("checked");
+        if (lab_Flight){
+            text += plane.flight + '<br>';
+        }
+        if (lab_Altitude){
+            text += plane.altitude + '<br>';
+        }
+        if (lab_Speed){
+            text += plane.speed + '<br>';
+        }
+        if (lab_ICAO){
+            text += plane.hex;
+        }
+        return text;
+    }
+
+
+
+
+
+    function selectPlane(){
+        if (!Planes[this.planehex]) return; // 若飞机序列里没有当前选中的飞机，则返回
+        var old = Selected; // 将前次选中保存到old 
+        Selected = this.planehex; // 保存当前选中
+        
+        //console.log('this:'+this.planehex); 
+        
+        if (old) {
+            
+            /* 为前次选中的修复图标 */
+            map.removeOverlay(Planes[old].marker); // 通过重新生成marker的方式实时调整图标，经验证setIcon方法不能实时更新 
+            Planes[old].marker = new BMap.Marker(new BMap.Point(Planes[old].lon ,Planes[old].lat),setIconInfo(Planes[old]));
+            //Planes[old].marker.addEventListener("click", selectPlane);
+            Planes[old].marker.planehex = old; //为重新生成的marker添加hex信息
+            map.addOverlay(Planes[old].marker);
+            Planes[old].marker.addEventListener("click", selectPlane);
+            /* 为前次选中的修复标牌 */ 
+            if (map.getZoom()>9) {
+                label = new BMap.Label(getLabelText(Planes[old]),{offset:new BMap.Size(30,-20)}); // 为飞机创建标签 
+                label.setStyle({maxWidth: "none",
+                                border: "0px",
+                                backgroundColor: "rgba(255,255,255,0.5)"});
+                Planes[old].marker.setLabel(label);
+            }
+            
+            /* 若非全显模式，隐藏前次轨迹 */
+            var traceShowIndic = $("#traceShowing");
+            if (!traceShowIndic.prop("checked")){
+                for (var i = 0; i < planeTrace[old].length; i++){
+                    map.removeOverlay(planeTrace[old][i]);
+                }
+            }
+            
+
+        }
+        
+        /* 为当前选中的新建图标 */
+        map.removeOverlay(Planes[Selected].marker);
+        Planes[Selected].marker = new BMap.Marker(new BMap.Point(Planes[Selected].lon ,Planes[Selected].lat),setIconInfo(Planes[Selected]));
+        //Planes[Selected].marker.addEventListener("click", selectPlane);
+        map.addOverlay(Planes[Selected].marker);
+        Planes[Selected].marker.addEventListener("click", selectPlane);
+        
+        /* 为当前选中的新建标牌 */
+        label = new BMap.Label(getLabelText(Planes[Selected]),{offset:new BMap.Size(30,-20)}); // 为飞机创建标签 
+        label.setStyle({maxWidth: "none",
+                        border: "0px",
+                        backgroundColor: "rgba(255,255,255,0.5)"});
+        Planes[Selected].marker.setLabel(label);
+    
+
+        /* 若非全显模式，显示当前轨迹 */
+        if (!traceShowIndic.prop("checked")) {
+            for (var i = 0; i < planeTrace[Selected].length; i++){
+                map.addOverlay(planeTrace[Selected][i]);
+            }
+        }            
+
+        refreshSelectInfo(); //刷新信息板
+
+
+    }
+
+    function refreshNumInfo(){
+        var i = document.getElementById('numinfo');
+        i.innerHTML = '当前共有 ' + NumOfPlanes + ' 架飞机显示在屏幕上';
+    }
+
+
+    function refreshSelectInfo(){
+        var i = document.getElementById('selectedinfo');
+        var p = Planes[Selected];
         if (!p) return;
-        var html = 'ICAO: '+p.hex+'<br>';
+        var html = '所选飞机信息:<br>'; 
+        html += 'ICAO: '+p.hex+'<br>';
         if (p.flight.length) {
             html += '<b>'+p.flight+'</b><br>';
         }
-        html += 'Altitude: '+p.altitude+' feet<br>';
-        html += 'Speed: '+p.speed+' knots<br>';
-        html += 'Coordinates: '+p.lat+', '+p.lon+'<br>';
+        html += '海拔: '+p.altitude+' feet<br>';
+        html += '速度: '+p.speed+' knots<br>';
+        html += '经纬度: '+p.lat+', '+p.lon+'<br>';
         i.innerHTML = html;
+
     }
 
-    function fetchData() {
-        $.getJSON('/data.json', function(data) {
-            var stillhere = {}
-            for (var j=0; j < data.length; j++) {
+    /* 改变地图样式 */
+    function changeMapStyle(){
+        var temp_oldStyle = mapStyleIndic; //储存前次
+        mapStyleIndic = $('input:radio[name="mapstyle"]:checked').val(); //获取当前
+        if (temp_oldStyle != mapStyleIndic) {
+            if (mapStyleIndic=="light") {
+                map.setMapStyle(mapStyle_light);
+            }
+            if (mapStyleIndic=="night") {
+                map.setMapStyle(mapStyle_night);
+            }
+        }
+    }
+
+    
+    /* 绘制范围环函数 */
+    function setRangeCircle(){
+        var tempIndic = $("#rangeCircleOpen");
+        /* 若开启绘制功能，启用输入框 */
+        if (tempIndic.prop("checked")) {
+            $("#rangeInput_number").removeAttr("disabled");
+            $("#rangeInput_lon").removeAttr("disabled");
+            $("#rangeInput_lat").removeAttr("disabled");
+            /* 若有具体数值则绘制圆形框 */
+            circleRange = $('#rangeInput_number').val();
+            circleLon = $('#rangeInput_lon').val();
+            circleLat = $('#rangeInput_lat').val();
+            if (circleRange && circleLat && circleLon) {
+                /* 若数值改变则重设半径和中心 */
+                if (circleRangeOld != circleRange || circleLonOld != circleLon || circleLatOld != circleLat){
+                    for (var i=0; i<5; i++){
+                        map.removeOverlay(rangeCircleMarker[i]);
+                        rangeCircleMarker[i].setCenter(new BMap.Point(circleLon, circleLat));
+                        rangeCircleMarker[i].setRadius(circleRange*1000*0.2*(i+1));
+                        map.addOverlay(rangeCircleMarker[i]);
+                    }
+                }
+                circleRangeOld = circleRange; //储存当前信息
+                circleLatOld = circleLat;
+                circleLonOld = circleLon;
+            }
+        }
+        /* 若关闭绘制功能，清除范围环，禁用输入框 */
+        else {
+            $("#rangeInput_number").attr("disabled",true);
+            $("#rangeInput_lon").attr("disabled",true);
+            $("#rangeInput_lat").attr("disabled",true);
+            for (var i=0; i<5; i++){
+                map.removeOverlay(rangeCircleMarker[i]);
+            }
+            circleRangeOld = null;
+            circleLatOld = null;
+            circleLonOld = null;
+        }
+    }
+
+
+    
+
+
+
+    function fetchData(){
+        $.getJSON('/data.json', function(data){
+            var stillhere = {}; //记录飞机是否仍在此处，若未能接收到信息则判定已不在 
+                       
+
+            for (var j=0; j<data.length; j++) {
                 var plane = data[j];
                 var marker = null;
+                var label = null;
                 stillhere[plane.hex] = true;
-                plane.flight = $.trim(plane.flight);
+                plane.flight = $.trim(plane.flight); // 删除字符串两边的空格 
 
-                if (Planes[plane.hex]) {
+                if (Planes[plane.hex]) { //对已经存在于Planes序列中的飞机(已经存在，状态改变的)
                     var myplane = Planes[plane.hex];
-                    marker = myplane.marker;
-                    var icon = marker.getIcon();
-                    var newpos = new google.maps.LatLng(plane.lat, plane.lon);
-                    marker.setPosition(newpos);
-                    marker.setIcon(getIconForPlane(plane));
+                    //historyPoints[plane.hex].push( new BMap.Point(plane.lon, plane.lat));
+                    marker = myplane.marker; //从Planes中取到相应的飞机，再取到该marker
+                    map.removeOverlay(marker);
+                    //marker.setPosition(new BMap.Point(plane.lon, plane.lat));
+                    //marker.setIcon(setIconInfo(plane));
+                    //map.addOverlay(marker);
+                    
+
+                    /* 重新生成该marker */
+                    marker = new BMap.Marker(new BMap.Point(plane.lon ,plane.lat),setIconInfo(plane)); //重新创建marker
+                    map.addOverlay(marker); //显示marker
+                    plane.marker = marker; //储存marker
+                    marker.planehex = plane.hex;
+                    Planes[plane.hex] = plane; //Planes储存每架飞机的信息 
+                    plane.marker.addEventListener("click", selectPlane);
+                    
+                    /* 放大度大于9或该飞机为当前所选时，更新标牌 */
+                    if(map.getZoom() > 9 || Selected == plane.hex){
+                        label = new BMap.Label(getLabelText(plane),{offset:new BMap.Size(30,-20)}); /* 为飞机创建标签 */
+                        label.setStyle({maxWidth: "none",
+                                        border: "0px",
+                                        backgroundColor: "rgba(255,255,255,0.5)"});
+                        marker.setLabel(label);
+                    }
+
+                    /* 若为当前选中的且开启跟踪功能，跟踪 */
+                    if (Selected == plane.hex){
+                        var tempIndic = $("#planeTracking");
+                        if (tempIndic.prop("checked")) {
+                            map.panTo(new BMap.Point(plane.lon, plane.lat));
+                        }
+                    }
+                    
+
+                    var point_temp = new BMap.Point(plane.lon, plane.lat);
+                    var trace_temp = new BMap.Polyline([point_now[plane.hex],point_temp], setTraceInfo(plane));
+                    
+                    planeTrace[plane.hex].push(trace_temp); //将此次轨迹存入该飞机的轨迹数组
+                    //若全部显示模式，或为当前选中，显示轨迹
+                    var traceShowIndic = $("#traceShowing");
+                    if (traceShowIndic.prop("checked")) {
+                        map.addOverlay(trace_temp);
+                    }
+                    else {
+                        if (Selected == plane.hex) {
+                            map.addOverlay(trace_temp);
+                        }
+                    }
+                    point_now[plane.hex] = point_temp; //储存当前位置,以备生成下一段轨迹
+
+
                     myplane.altitude = plane.altitude;
                     myplane.speed = plane.speed;
                     myplane.lat = plane.lat;
                     myplane.lon = plane.lon;
                     myplane.track = plane.track;
                     myplane.flight = plane.flight;
-                    if (myplane.hex == Selected)
-                        refreshSelectedInfo();
-                } else {
-                    marker = new google.maps.Marker({
-                        position: new google.maps.LatLng(plane.lat, plane.lon),
-                        map: Map,
-                        icon: getIconForPlane(plane)
-                    });
-                    plane.marker = marker;
-                    marker.planehex = plane.hex;
-                    Planes[plane.hex] = plane;
-
-                    /* Trap clicks for this marker. */
-                    google.maps.event.addListener(marker, 'click', selectPlane);
+                    if (myplane.hex == Selected){
+                        refreshSelectInfo();
+                    }
                 }
-                if (plane.flight.length == 0)
-                    marker.setTitle(plane.hex)
-                else
-                    marker.setTitle(plane.flight+' ('+plane.hex+')')
-            }
-            NumPlanes = data.length;
+                else{ //对不存在于Planes序列中的飞机(新到的)
+                    marker = new BMap.Marker(new BMap.Point(plane.lon ,plane.lat),setIconInfo(plane)); //为新到飞机创建marker
+                    map.addOverlay(marker); //显示marker
+                    
+                    /* 更新标牌 */
+                    if (map.getZoom()>9){
+                        label = new BMap.Label(getLabelText(plane),{offset:new BMap.Size(30,-20)}); //为新到飞机创建标签 
+                        label.setStyle({maxWidth: "none",
+                                        border: "0px",
+                                        backgroundColor: "rgba(255,255,255,0.5)"});
+                        marker.setLabel(label) //显示标签
+                    }
+                    
 
-            /* Remove idle planes. */
+                    plane.marker = marker; //储存marker
+                    marker.planehex = plane.hex;
+                    Planes[plane.hex] = plane; //Planes储存每架飞机的信息 
+                    //historyPoints[plane.hex] = []; //初始化历史位置序列 
+                    planeTrace[plane.hex] = []; //初始化轨迹序列
+                    point_now[plane.hex] = new BMap.Point(plane.lon, plane.lat); //存入当前位置
+                    plane.marker.addEventListener("click", selectPlane);
+                }
+
+                
+                /* todo: 检测有无航班号，若无则不显示 */
+            }
+
+            NumOfPlanes = data.length;
+            
+            /* 移除已不在的飞机 */
             for (var p in Planes) {
-                if (!stillhere[p]) {
-                    Planes[p].marker.setMap(null);
+                if (!stillhere[p]){
+                    Planes[p].marker.enableMassClear();
+                    map.removeOverlay(Planes[p].marker);
+                    for (var i = 0; i < planeTrace[p].length; i++){
+                        map.removeOverlay(planeTrace[p][i]);
+                    }
                     delete Planes[p];
                 }
             }
-        });
+            
+            }
+        );
     }
 
-    function initialize() {
-        var mapOptions = {
-            center: new google.maps.LatLng(CenterLat, CenterLon),
-            zoom: 5,
-            mapTypeId: google.maps.MapTypeId.ROADMAP
-        };
-        Map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
 
-        /* Setup our timer to poll from the server. */
+
+    /* 点击事件，保存设置信息到localStorage */
+    $(".btn.btn-primary").click(function(){
+        var generalSettings ={
+            planeTracking: $("#planeTracking").prop("checked"), //追踪开启
+            traceShowing: $("#traceShowing").prop("checked") //轨迹全部显示
+        };
+        var mapSettings = {
+            mapStyle: $('input:radio[name="mapstyle"]:checked').val(), //地图风格
+            circleOn: $("#rangeCircleOpen").prop("checked"), //范围环开启
+            circleRange: $('#rangeInput_number').val(),
+            circleLon: $('#rangeInput_lon').val(),
+            circleLat: $('#rangeInput_lat').val()
+        };
+        var labelSettings = {
+            lab_ICAO: $("#labelICAO").prop("checked"),
+            lab_Flight: $("#labelFlight").prop("checked"),
+            lab_Altitude: $("#labelAltitude").prop("checked"),
+            lab_Speed: $("#labelSpeed").prop("checked")
+        };
+        localStorage.setItem('general',JSON.stringify(generalSettings));
+        localStorage.setItem('map',JSON.stringify(mapSettings));
+        localStorage.setItem('label',JSON.stringify(labelSettings));
+        alert("设置已保存");
+    });
+    /*
+    function saveSettings(){
+        var generalSettings ={
+            planeTracking: $("#planeTracking").prop("checked"), //追踪开启
+            traceShowing: $("#traceShowing").prop("checked") //轨迹全部显示
+        };
+        var mapSettings = {
+            mapStyle: $('input:radio[name="mapstyle"]:checked').val(), //地图风格
+            circleOn: $("#rangeCircleOpen").prop("checked"), //范围环开启
+            circleRange: $('#rangeInput_number').val(),
+            circleLon: $('#rangeInput_lon').val(),
+            circleLat: $('#rangeInput_lat').val()
+        };
+        var labelSettings = {
+            lab_ICAO: $("#labelICAO").prop("checked"),
+            lab_Flight: $("#labelFlight").prop("checked"),
+            lab_Altitude: $("#labelAltitude").prop("checked"),
+            lab_Speed: $("#labelSpeed").prop("checked")
+        };
+        localStorage.setItem('general',JSON.stringify(generalSettings));
+        localStorage.setItem('map',JSON.stringify(mapSettings));
+        localStorage.setItem('label',JSON.stringify(labelSettings));
+        alert("setting saved");
+    }*/
+
+    /* 从localStorage读取设置信息 */
+    function loadSettings(){
+        var generalSettings = JSON.parse(localStorage.getItem('general'));
+        $("#planeTracking").prop("checked",generalSettings.planeTracking);
+        $("#traceShowing").prop("checked",generalSettings.traceShowing);
+        
+        var mapSettings = JSON.parse(localStorage.getItem('map'));
+        if (mapSettings.mapStyle == "light"){
+            $("input:radio[value='light']").attr('checked','true');
+        }
+        if (mapSettings.mapStyle == "night"){
+            $("input:radio[value='night']").attr('checked','true');
+        }
+        $("#rangeCircleOpen").prop("checked",mapSettings.circleOn);
+        $('#rangeInput_number').val(mapSettings.circleRange);
+        $('#rangeInput_lon').val(mapSettings.circleLon);
+        $('#rangeInput_lat').val(mapSettings.circleLat);
+        
+        var labelSettings = JSON.parse(localStorage.getItem('label'));
+        $("#labelICAO").prop("checked",labelSettings.lab_ICAO);
+        $("#labelFlight").prop("checked",labelSettings.lab_Flight);
+        $("#labelAltitude").prop("checked",labelSettings.lab_Altitude);
+        $("#labelSpeed").prop("checked",labelSettings.lab_Speed);
+    }
+
+    function setTable(){
+        var temp = '<tr>';
+        temp += '<th scope="row">' + 'str1' + '</th>';//编号
+        temp += '<td>' + 'str2' + '</td>';//flight
+        temp += '<td>' + 'str2' + '</td>';//speed
+        temp += '<td>' + 'str2' + '</td>';//altitude
+        temp += '<td>' + 'str2' + '</td>';//icao
+        temp += '</tr>'
+        $("#tablebody").append(temp);
+    }
+
+
+    function initialize(){
+        loadSettings();
+        /* 以1s的周期获取数据及刷新信息板 */
         window.setInterval(function() {
             fetchData();
-            refreshGeneralInfo();
+            refreshNumInfo();
+            changeMapStyle();
+            setRangeCircle();
+            //setTable();
         }, 1000);
     }
 
+    
+
+
+
     </script>
-  </head>
-  <body onload="initialize()">
-    <div id="map_canvas" style="width:80%; height:100%"></div>
-    <div id="info">
-      <div>
-        <h1>Dump1090</h1>
-        <p id="geninfo"></p>
-        <p id="selinfo">Click on a plane for info.</p>
-      </div>
-    </div>
-  </body>
+
+</body>
 </html>
