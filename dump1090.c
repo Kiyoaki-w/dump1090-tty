@@ -537,7 +537,7 @@ void dumpRawMessage(char *descr, unsigned char *msg,
     int msgtype = msg[0]>>3;
     int fixable = -1;
     
-    if (msgtype == 11 || msgtype == 17) {
+    if (msgtype == 11 || msgtype == 17 || msgtype == 18 || msgtype == 21) {
         int msgbits = (msgtype == 11) ? MODES_SHORT_MSG_BITS :
         MODES_LONG_MSG_BITS;
         fixable = fixSingleBitErrors(msg, msgbits);
@@ -617,7 +617,7 @@ uint32_t modesChecksum(unsigned char *msg, int bits) {
 /* Given the Downlink Format (DF) of the message, return the message length
  * in bits. */
 int modesMessageLenByType(int type) {
-    if (type == 16 || type == 17 ||
+    if (type == 16 || type == 17 || type == 18 ||
         type == 19 || type == 20 ||
         type == 21)
         return MODES_LONG_MSG_BITS;
@@ -916,12 +916,12 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
     mm->crcok = (mm->crc == crc2);
     
     if (!mm->crcok && Modes.fix_errors &&
-        (mm->msgtype == 11 || mm->msgtype == 17))
+        (mm->msgtype == 11 || mm->msgtype == 17 || mm->msgtype == 18))
     {
         if ((mm->errorbit = fixSingleBitErrors(msg, mm->msgbits)) != -1) {
             mm->crc = modesChecksum(msg, mm->msgbits);
             mm->crcok = 1;
-        } else if (Modes.aggressive && mm->msgtype == 17 &&
+        } else if (Modes.aggressive && (mm->msgtype == 17 || mm->msgtype == 18) && 
                    (mm->errorbit = fixTwoBitsErrors(msg, mm->msgbits)) != -1)
         {
             mm->crc = modesChecksum(msg, mm->msgbits);
@@ -982,7 +982,7 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
     
     /* DF 11 & 17: try to populate our ICAO addresses whitelist.
      * DFs with an AP field (xored addr and crc), try to decode it. */
-    if (mm->msgtype != 11 && mm->msgtype != 17) {
+    if (mm->msgtype != 11 && mm->msgtype != 17 && mm->msgtype != 18) {
         /* Check if we can check the checksum for the Downlink Formats where
          * the checksum is xored with the aircraft ICAO address. We try to
          * brute force it using a list of recently seen aircraft addresses. */
@@ -1009,7 +1009,7 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
     }
     
     /* Decode extended squitter specific stuff. */
-    if (mm->msgtype == 17) {
+    if (mm->msgtype == 17 || mm->msgtype == 18) {
         /* Decode the extended squitter message. */
         
         if (mm->metype >= 1 && mm->metype <= 4) {
@@ -1024,7 +1024,7 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
             mm->flight[6] = ais_charset[((msg[9]&15)<<2)|(msg[10]>>6)];
             mm->flight[7] = ais_charset[msg[10]&63];
             mm->flight[8] = '\0';
-        } else if (mm->metype >= 9 && mm->metype <= 18) {
+        } else if (mm->metype >= 9 && mm->metype <= 18 || mm->metype == 21) {
             /* Airborne position Message */
             mm->fflag = msg[6] & (1<<2);
             mm->tflag = msg[6] & (1<<3);
@@ -1136,7 +1136,7 @@ void displayModesMessage(struct modesMessage *mm) {
         printf("DF 11: All Call Reply.\n");
         printf("  Capability  : %s\n", ca_str[mm->ca]);
         printf("  ICAO Address: %02x%02x%02x\n", mm->aa1, mm->aa2, mm->aa3);
-    } else if (mm->msgtype == 17) {
+    } else if (mm->msgtype == 17 || mm->msgtype == 18) {
         /* DF 17 */
         printf("DF 17: ADS-B message.\n");
         printf("  Capability     : %d (%s)\n", mm->ca, ca_str[mm->ca]);
@@ -1158,7 +1158,7 @@ void displayModesMessage(struct modesMessage *mm) {
             
             printf("    Aircraft Type  : %s\n", ac_type_str[mm->aircraft_type]);
             printf("    Identification : %s\n", mm->flight);
-        } else if (mm->metype >= 9 && mm->metype <= 18) {
+        } else if (mm->metype >= 9 && mm->metype <= 18 || mm->metype == 21 ) {
             printf("    F flag   : %s\n", mm->fflag ? "odd" : "even");
             printf("    T flag   : %s\n", mm->tflag ? "UTC" : "non-UTC");
             printf("    Altitude : %d feet\n", mm->altitude);
@@ -1467,10 +1467,10 @@ struct aircraft *interactiveReceiveData(struct modesMessage *mm) {
     
     if (mm->msgtype == 0 || mm->msgtype == 4 || mm->msgtype == 20) {
         a->altitude = mm->altitude;
-    } else if (mm->msgtype == 17) {
+    } else if (mm->msgtype == 17 || mm->msgtype == 18) {
         if (mm->metype >= 1 && mm->metype <= 4) {
             memcpy(a->flight, mm->flight, sizeof(a->flight));
-        } else if (mm->metype >= 9 && mm->metype <= 18) {
+        } else if (mm->metype >= 9 && mm->metype <= 18 || mm->metype == 21) {
             a->altitude = mm->altitude;
             if (mm->fflag) {
                 a->odd_cprlat = mm->raw_latitude;
@@ -1719,7 +1719,10 @@ void modesSendAllClients(int service, void *msg, int len) {
 
 /* Write raw output to TCP clients. */
 void modesSendRawOutput(struct modesMessage *mm) {
-    char msg[128], *p = msg;
+    /* Modifications were performed to be compatible with iPad
+     * Objective-C program, including using 'unsigned char' and
+     * '\r\n' as EOL. */
+    unsigned char msg[128], *p = msg;
     int j;
     
     *p++ = '*';
@@ -1728,6 +1731,7 @@ void modesSendRawOutput(struct modesMessage *mm) {
         p += 2;
     }
     *p++ = ';';
+    *p++ = '\r';
     *p++ = '\n';
     modesSendAllClients(Modes.ros, msg, p-msg);
 }
@@ -1760,10 +1764,10 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
     } else if (mm->msgtype == 11) {
         p += sprintf(p, "MSG,8,,,%02X%02X%02X,,,,,,,,,,,,,,,,,",
                      mm->aa1, mm->aa2, mm->aa3);
-    } else if (mm->msgtype == 17 && mm->metype == 4) {
+    } else if ((mm->msgtype == 17 || mm->msgtype == 18) && mm->metype == 4) {
         p += sprintf(p, "MSG,1,,,%02X%02X%02X,,,,,,%s,,,,,,,,0,0,0,0",
                      mm->aa1, mm->aa2, mm->aa3, mm->flight);
-    } else if (mm->msgtype == 17 && mm->metype >= 9 && mm->metype <= 18) {
+    } else if ((mm->msgtype == 17 || mm->msgtype == 18) && (mm->metype >= 9 && mm->metype <= 18 || mm->metype == 21)) {
         if (a->lat == 0 && a->lon == 0)
             p += sprintf(p, "MSG,3,,,%02X%02X%02X,,,,,,,%d,,,,,,,0,0,0,0",
                          mm->aa1, mm->aa2, mm->aa3, mm->altitude);
@@ -1771,7 +1775,7 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
             p += sprintf(p, "MSG,3,,,%02X%02X%02X,,,,,,,%d,,,%1.5f,%1.5f,,,"
                          "0,0,0,0",
                          mm->aa1, mm->aa2, mm->aa3, mm->altitude, a->lat, a->lon);
-    } else if (mm->msgtype == 17 && mm->metype == 19 && mm->mesub == 1) {
+    } else if ((mm->msgtype == 17 || mm->msgtype == 18) && mm->metype == 19 && mm->mesub == 1) {
         int vr = (mm->vert_rate_sign==0?1:-1) * (mm->vert_rate-1) * 64;
         
         p += sprintf(p, "MSG,4,,,%02X%02X%02X,,,,,,,,%d,%d,,,%i,,0,0,0,0",
@@ -1799,9 +1803,13 @@ void modesSendTrajectoryOutput(struct aircraft *a) {
     if (a->lon == 0 || a->lat == 0) {
         return;
     }
-    int n = sprintf(msg, "!%s,%.4lf,%.4lf,%d,%d,%d,%ld*",
-                    a->flight, a->lon, a->lat, altitude, speed, a->track, a->seen);
-    modesSendAllClients(Modes.trs, msg, n);
+    // timestamp removed & icao addr added
+    int n = sprintf(msg, "!%s,%s,%f,%f,%d,%d,%d*",
+                    a->hexaddr, a->flight, a->lon, a->lat, altitude, speed, a->track);
+    // ignore plane with empty flight
+    if (a->flight[0] != '\0') {
+      modesSendAllClients(Modes.trs, msg, n);  
+    }
 }
 
 /* Turn an hex digit into its 4 bit decimal value.
@@ -1830,7 +1838,7 @@ int hexToBin(char *hex, unsigned char *msg) {
         hex++;
         l--;
     }
-    
+
     /* Turn the message into binary. */
     if (l < 2 || hex[0] != '*' || hex[l-1] != ';') return 0;
     hex++; l-=2; /* Skip * and ; */
